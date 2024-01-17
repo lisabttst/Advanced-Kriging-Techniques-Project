@@ -1,0 +1,449 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{css, echo=FALSE}
+.answer {
+background-color: lightblue;
+}
+```
+Note: il est recommandé de travailler avec RStudio. A l'ouverture de ce document R markdown (.Rmd), si les accents apparaissent mal, dans RStudio sélectionner File, Reopen with encoding puis utf8. Une fois le document réalisé, vous pouvez utiliser le bouton knit pour générer une sortie au format html.
+
+La numérotation des exercices poursuit celle du TP n°1 qui comporte trois exercices, elle commence donc à 4.
+
+On rappelle une syntaxe de base pour opérer un Krigeage Simple à l'aide de la librairie DiceKriging:
+`monModele <- km(formula = ~1, design = X, response = Y, covtype = "gauss", coef.trend = 0,  coef.cov = theta, coef.var = sigma2)`
+`prediction <- predict(object = monModele, newdata = xnew , type="SK" , checkNames=FALSE, se.compute=TRUE)`.
+
+# Exercice 4. Optimisation des covariances en dimension 1
+
+On considère un phénomène physique, pour les besoins du TP, nous le modéliserons par une fonction
+$$ f(x) = sin(4x)+log(2+x)+cos(15x)/2 $$
+on observe cette fonction à des abscisses tirées aléatoirement entre -1 et 1.
+
+Créer un échantillon d'apprentissage de $n=100$ évaluations de la fonction, et un échantillon de test de $q=50$ évaluations de la fonction. 
+
+
+```{r, class.source="answer"}
+
+f <- function(x) {
+  return(sin(4*x)+log(2+x)+cos(15*x)/2) 
+}
+
+
+n=100
+q=50
+
+set.seed(123)
+
+Xtrain  = (runif(n, min=-1, max=1))
+Xtest  = (runif(q, min=-1, max=1))
+
+Ytrain = (f(Xtrain))
+Ytest = (f(Xtest))
+
+plot(Xtrain,Ytrain)
+
+```
+
+***
+
+On suppose que le paramètre de portée est $\theta \in [0.4, 5]$.
+
+Pour calculer les prédicteurs de Krigeage, nous utiliserons DiceKriging comme dans le TP1.
+
+
+Remarque: DiceKriging retourne parfois des erreurs `Error in chol.default(R) :   le mineur dominant d'ordre 20 n'est pas défini positif`. Cela indique que la matrice de covariance $K=k(X,X)$ utilisée dans le Krigeage (cf cours) n'est pas numériquement inversible. Usuellement, cela peut provenir de contraintes trop fortes sur le modèle de Krigeage: par exemple, vous essayez de faire passer une trajectoire de régularité $C^{\infty}$ par un ensemble de points ne correspondant pas à cette régularité. Intuitivement, si vous essayez de faire passer une trajectoire $C^{\infty}$ par des points dont les variations sont trop brutales, par exemple, vous pouvez vous retrouver bloqués, surtout si votre portée est grande (trajectoires variant très/trop progressivement)
+
+* Une solution pour résoudre le problème est alors de changer le type de noyau et d'utiliser un noyau dont les trajectoires sont moins contraintes comme "matern3_2" ou "exp": on passe de trajectoires $C^{\infty}$ pour Gauss à non différentiables pour exp, ce qui est beaucoup moins contraint!. 
+* Une autre solution est de rajouter un petit bruit d'observation au moyen de l'argument "nugget=" de la fonction km, de façon à assouplir les contraintes d'interpolation (cf. slides de cours pp. 38-39). 
+
+## 4a. Erreur de validation croisée
+
+Remarque: par simplicité, on va utiliser ici un seul échantillon d'apprentissage, et un seul échantillon de test. Mais usuellement, la validation croisée s'opère en calculant une erreur moyenne sur plusieurs échantillons (apprentissage, test).
+
+Pour un paramètre $\theta$ donné et une famille de covariance "matern3_2" faire une fonction qui:
+
+* au moyen d'un Krigeage Simple opère une prévision de la fonction aux $q$ points de l'échantillon test.
+
+* renvoie l'erreur quadratique moyenne entre ces prédictions et les vraies valeurs de la fonction.
+
+Cette erreur dépend-elle de la variance du champ (paramètre `coef.var=` dans `km`)?
+ 
+
+```{r, class.source="answer"}
+library(DiceKriging)
+
+
+crossValidationError <- function(famille, theta) {
+
+    monModele <- km(formula = ~1, design = Xtrain, response = Ytrain, covtype = famille, coef.trend = 0,  coef.cov = theta, coef.var = 1)
+  prediction <- predict(object = monModele, newdata = Xtest , type="SK" , checkNames=FALSE, se.compute=FALSE)  
+
+  error =  (mean((prediction$mean -Ytest)^2))   
+  
+  return(error)
+}
+essai <- crossValidationError("matern3_2", 1)
+message("erreur =", essai)
+```
+
+***
+
+## 4b. Optimisation de la portée par validation croisée
+
+Tracer l'évolution de l'erreur obtenue en fonction du paramètre de portée, et trouver le minimum approximatif et l'erreur qui en résulte. Répéter ce traitement pour plusieurs familles de covariance. Peut-on identifier une portée optimale? essayer de faire varier `set.seed(...)` en début de votre programme, pour avoir une idée de la robustesse de cette portée optimale.
+
+```{r, class.source="answer"}
+# this allows calling crossValidationError with vector argument for theta
+# otherwise, do a loop...
+crossValidationErrorOnVector <- Vectorize(crossValidationError, "theta")
+
+thetaRange <- seq(0.4, 5, length.out = 500)
+errors <- crossValidationErrorOnVector("matern3_2",thetaRange)
+plot(thetaRange, (errors), type="l")
+
+#optimalTheta = thetaRange[(errors-min(errors)<1e-16)]
+optimalTheta = thetaRange[which.min(errors)]
+abline(v=optimalTheta, col="red")
+title(main = paste("optimalTheta = ", optimalTheta))
+
+
+# On observe des résultats assez sensibles au changement des données de départ
+# Si la fonction de départ est modifiée, cela peut être délicat de trouver un optimum
+# Il est possible moyenner les erreurs sur différents échantillons
+# De nombreuses recherches peuvent être conduites pour améliorer les résultats:
+# choix du critère d'écart, choix des échantillons, résultats théoriques, etc.
+
+```
+
+***
+
+## 4c. Optimisation par LOO
+
+Dans DiceKriging, lorsque les paramètres de portée (*lengthscales* ou encore *range*) ne sont pas précisés, une optimisation est effectuée pour les estimer. Il est alors possible de les obtenir au moyen de  `coef(krigingModel, "range")`, où `krigingModel`est un output de la fonction `km`. La méthode utilisée est configurable grâce à l'argument `estim.method="MLE"` ou `estim.method="LOO"`.	
+
+Utiliser DiceKriging pour estimer le paramètre de portée optimal, par leave-one-out.
+
+
+
+```{r, class.source="answer"}
+# commençons par utiliser le Leave-One-Out (LOO)
+
+famille = "matern3_2"
+krigingModel <- km(formula = ~1, design = data.frame(Xtrain), response = Ytrain, covtype = famille, coef.trend = 0,  estim.method = "LOO")
+bestThetaLOO = coef(krigingModel, "range")
+sd2LOO = coef(krigingModel, "sd2")
+
+message("DiceKriging: par optimisation LOO, theta= ", bestThetaLOO)
+```
+
+***
+
+## 4d Optimisation par MLE
+
+Utiliser DiceKriging pour estimer le paramètre de portée optimal, par maximum de vraisemblance (Maximum Likelihood Estimator).
+ 
+
+```{r, class.source="answer"}
+# essayons d'optimiser la portée par MLE
+
+krigingModel <- km(formula = ~1, design = data.frame(Xtrain), response = Ytrain, covtype = famille, coef.trend = 0,  estim.method = "MLE")
+bestThetaMLE = coef(krigingModel, "range")
+sd2MLE = coef(krigingModel, "sd2")
+
+message("DiceKriging: par optimisation MLE, theta= ", bestThetaMLE)
+
+# fonction log Likelihood à optimiser, pour le tracé
+L <- vector(length = length(thetaRange))
+for(i in 1:length(thetaRange)) {
+  L[i] <- logLikFun(thetaRange[i], krigingModel)
+}
+
+plot(thetaRange, L, col="blue", type="l", main="concentrated log Likelihood")
+abline(v=bestThetaMLE, col="red")
+```
+
+***
+
+Une estimation de la variance est possible de la même façon via  `coef(krigingModel, "sd2")`. Donner la variance et l'écart-type estimés par DiceKriging
+
+
+```{r, class.source="answer"}
+
+sd2Dice = coef(krigingModel, "sd2")
+sdDice = sqrt(sd2Dice)
+thetaDice = coef(krigingModel, "range")
+```
+
+***
+
+Regrouper ici les différentes portées optimales obtenues:
+
+
+```{r, class.source="answer"}
+message("perso, cross validation, ", optimalTheta)
+message("DiceK, cross validation, ", bestThetaLOO)
+message("DiceK, max likelihood,   ", bestThetaMLE)
+```
+***
+
+# Exercice 5 Variogramme
+
+On va ici reprendre les mêmes données que celles de l'exercice 4. Nous allons tenter une analyse variographique. Pour mémoire, on constate que 
+$$\frac{1}{2} V\left[ Y(x_i)-Y(x_j)\right]  = \frac{1}{2} \left( V[Y(x_i)] + V[Y(x_j)] - 2Cov[Y(x_i),Y(x_j)]\right)$$
+En conséquence, sous les hyptohèses de stationnarité vues en cours, 
+$$\frac{1}{2} E\left[ (Y(x_i)-Y(x_j))^2\right] = k(0) - k(||x_i-x_j||).$$
+
+A partir des données `Xtrain` et 
+`Ytrain` tracer la nuée variographique c'est à dire pour chaque couple $(x_i,x_j)$ de `Xtrain` calculer:
+$$\tau_{ij} =  ||x_i - x_j||$$
+et pour le couple correspondant $(y_i,y_j)$ de `Ytrain`, calculer
+$$\gamma_{ij} = \frac{1}{2} \left( y_i-y_j \right)^2$$
+
+## Question 5a. Tracer la nuée variographique
+
+c'est à dire tracer tous les points $(\tau_{ij},\gamma_{ij})$ possibles (pour tous les couples $ij$ possibles).
+
+
+```{r, class.source="answer"}
+
+ntrain <- length(Xtrain)
+
+tau <- c()
+gamma <- c()
+for(i in 1:ntrain) {
+  for(j in 1:ntrain) {
+    tauij = abs(Xtrain[i]-Xtrain[j])
+    gammaij = 0.5*(Ytrain[i]-Ytrain[j])^2
+    tau <- c(tau, tauij)
+    gamma <- c(gamma, gammaij)
+    # appending is not efficient, used for clarity here
+  }
+}
+    
+
+plot(tau, gamma, col="blue", cex=0.4, main="nuée variographique")
+
+
+```
+
+***
+
+## Question 5b. Comparer avec la fonction de covariance obtenue.
+
+On sait que
+$$\gamma(\tau) = k(0) - k(\tau)$$
+où $k$ est la fonction de covariance. Tracer la courbe théorique $\gamma(\tau)$ au dessus de la nuée variographique. Vous prendrez pour $k$ l'une des fonctions paramétrée trouvée à l'exercice précédent.
+Pour Matern 3/2, la fonction de covariance 1D s'écrit en fonction de la distance $\tau$ et pour une portée $\theta$:
+$$k_{matern} = \sigma^2 \left(1 + \sqrt{3} \frac{\tau}{\theta} \right)\exp\left(-\sqrt{3} \frac{\tau}{\theta} \right)$$
+remarquer la difficulté de l'ajustement variographique ici.
+
+
+
+```{r, class.source="answer"}
+#function in 1D
+kmatern3_2 <- function(tau, theta, sigma2) {
+  tauprime = sqrt(3) * tau / theta
+  sigma2 * (1 + tauprime) * exp(-tauprime)
+}
+
+gamma_hat <- function(tau, theta, sigma2) {
+  kmatern3_2(0, theta, sigma2) - kmatern3_2(tau, theta, sigma2)
+  # first term could be simplified, for clarity here
+}
+
+seqtau = seq(from=0, to=2, length.out = 1000)
+theoretical_gamma <- gamma_hat(seqtau, bestThetaMLE, sd2MLE)
+
+# local smoothing for graphics
+adjust <- loess(formula = gamma ~ tau)
+smooth_gamma <- predict(adjust, seqtau)
+
+#plot on the whole range
+plot(tau, gamma, col="blue", xlim=c(0,2), cex=0.3, pch=1, main="nuée et estimation MLE (rouge)")
+lines(seqtau, theoretical_gamma, col="red")
+lines(seqtau, smooth_gamma, col="green", lty=2)
+
+#here is a zoom
+plot(tau, gamma, col="blue", xlim=c(0,1), cex=0.3, pch=1, main="nuée et estimation MLE (rouge)")
+lines(seqtau, theoretical_gamma, col="red")
+lines(seqtau, smooth_gamma, col="green", lty=2)
+
+#in red: the theoretical gamma, using DiceKriging MLE parameters
+#in green: a local polynomial smoothing
+
+```
+
+***
+
+Gobalement, si on considère les différentes techniques, les résultats vous semblent-ils stables et concordants?
+ 
+
+```{r, class.source="answer"}
+# les résultats semblent très sensibles:
+# - ils varient parfois beaucoup selon le choix du seed (!)
+# - ils varient selon la taille des échantillons
+# - ils varient selon le choix des coefficients dans la fonction modélisée,
+# - ils ne concordent pas vraiment entre les différentes méthodes
+# - de nombreuses situations conduisent à une portée optimale qui tend vers 0 ou vers +infini...
+#
+# en résumé, l'optimisation des paramètres de portée n'est donc pas si triviale...
+
+```
+
+***
+
+# Exercice 6
+
+Dans certains cas, il est possible d'observer des répétitions du champ aléatoire considéré. Nous allons voir dans cet exercice comment optimiser les paramètres de portée pour s'approcher d'une corrélation empirique observée.
+
+Dans le répertoire du TP, un fichier *SriLankaTP2.csv* donne des précipitations mensuelles observées dans différentes ville au Sri Lanka.
+
+De nombreuses analyses de série chronologiques seraient possibles (saisonnalité, valeurs aberrantes, etc.), pour les besoins du TP, nous travaillerons directement sur les données brutes et non sur des résidus. 
+
+## 6a. Données et visualisations
+Importer tout d'abord le fichier (attention au séparateur et à la première ligne). Afficher les correlations au moyen de la fonction `cor`. Vous pourrez aussi utiliser la fonction `pairs` .
+
+
+
+```{r, class.source="answer"}
+rain = read.csv("SriLankaTP2.csv", sep=";", header=TRUE)
+pairs(rain)
+cor(rain)
+```
+
+***
+
+## 6b. Matrice des distances
+
+Après une recherche rapide sur Internet, on trouve les latitudes et longitudes approximatives suivantes:
+Colombo: 6.922, 79.863
+Pamban: 9.279, 79.225
+Puttalam: 8.0348, 79.837
+Thiruvananthapuram: 8.660, 76.946
+Trincomalee: 8.591, 81.213
+
+Créer une matrice `X`à deux colonnes contenant pour chaque ville ces coordonnées géographiques. Au moyen de `as.matrix(dist(X))`, créer ensuite une matrice contenant pour chaque paire de ville, une distance entre ces villes (peu importe l'unité), aisni que le coefficient de corrélation empirique entre les précipitations des deux villes en questions.
+
+Remarque sur la distance: on pourrait utiliser une distance géodésique sur la sphère, mais il faudrait alors adapter le noyau de covariance pour obtenir une fonction semi-définie positive. Autour de la ville de Colombo, 1 degré de latitude représente 111km, contre 110km pour 1 degré de longitude; nous négligerons également cet différence dans le TP. Au final, on ne considèrera donc qu'un distance euclidienne simple entre des coordonnées (lat, long), et un seul paramètre de portée.
+
+
+```{r, class.source="answer"}
+
+# remarque: https://www.nhc.noaa.gov/gccalc.shtml pour le calcul des 110 et 111km :-)
+
+names = c("Colombo","Pamban","Puttalam","Thiruvan.","Trincomalee")
+X = rbind(c(6.922, 79.863), c(9.279, 79.225), c(8.0348, 79.837), c(8.660, 76.946), c(8.591, 81.213))
+distances = as.matrix(dist(X))
+```
+***
+
+On suppose désormais que l'on utilise un noyau Gaussien isotrope de sorte que la correlation entre deux villes à distance $d$ est:
+$$ r(d) =\exp\left(-d^2/(2\theta^2)\right)$$
+
+## 6c. Corrélations théoriques
+
+Créer une fonction R renvoyant la matrice de corrélation théorique pour un $\theta$ donné.
+
+
+```{r, class.source="answer"}
+computeR <- function(distances, theta) {
+  n = nrow(distances)
+  R <-matrix(nrow = n, ncol=n)
+  for(i in seq(1,n)) {
+    for(j in seq(1,n)) {
+      R[i,j] = exp(-distances[i,j]^2/(2*theta^2))
+    }
+  }
+  return(R)
+}
+
+# Remarque: ici l'expression du noyau est suffisamment simple pour appliquer directement le noyau à la matrice des distances. C'est possible aussi bien entendu (et même plus performant).
+
+
+computeR(distances, 1)
+
+```
+
+***
+
+## 6d. optimisation de la portée
+
+Optimiser le paramètre de portée pour minimiser un écart de votre choix entre les corrélations théoriques (avec ce noyau et cette portée), et les corrélations empiriques. Nommez votre portée optimale *optimalTheta*
+
+
+```{r, class.source="answer"}
+Rempirical = cor(rain)
+
+distanceMatrices <- function(M1, M2) {
+  # return (max(abs(M1-M2)))
+    return (sqrt(mean((M1-M2)^2)))
+
+}
+
+nbThetas = 200
+thetas = seq(0.5, 5, length.out = nbThetas)
+errors = rep(0, nbThetas)
+
+for(i in seq(1, nbThetas)) {
+  errors[i] = distanceMatrices(Rempirical, computeR(distances, thetas[i]))
+}
+
+plot(thetas, errors)
+
+#optimalTheta = thetas[(errors==min(errors))]
+optimalTheta = thetas[which.min(errors)]
+
+title(main = paste("optimalTheta = ", optimalTheta, ", with error = ", min(errors)))
+abline(v=optimalTheta, col="red")
+
+```
+
+***
+
+## 6e Prédiction
+
+Avec cette famille de covariance la portée optimale, prédire au moyen d'un krigeage ordinaire les précipitations dans la ville de *Dambulla* en février 2013, en sachant que les précipitations pour ce mois dans les 5 villes respectives étaient
+
+Colombo: 164
+Pamban: 62
+Puttalam: 93
+Thiruvananthapuram: 43
+Trincomalee: 355
+
+Note: il vous faudra ici appliquer la portée $\theta$ à la latitude comme à la longitude, de sorte que `coef.cov = c(optimalTheta, optimalTheta)`.
+
+
+```{r, class.source="answer"}
+
+Y = c(164, 62, 93, 43, 355)
+
+#one find on Internet the approx. position of Dambulla:
+Xnew = t(c(7.8567,  80.6492))
+
+monModele <- km(formula = ~1, design = data.frame(X), response = data.frame(Y), covtype = "gauss", coef.cov = c(optimalTheta, optimalTheta), coef.var = 1)
+  prediction <- predict(object = monModele, newdata = data.frame(Xnew) , type="UK" , checkNames=FALSE, se.compute=TRUE)  
+  
+  message("la prediction à Dambulla est: ", prediction$mean)
+
+  
+# A noter, les correlations ne sont pas si bien ajustées...    
+computeR(distances, optimalTheta)
+Rempirical
+
+# Mais l'impact sur la prédiction n'est pas si énorme...
+
+## A noter: optimisation de la portée dans DiceKriging à partir des 5 seules observations
+# monModele <- km(formula = ~1, design = data.frame(X), response = data.frame(Y), covtype = "gauss", estim.method="LOO")
+# thetaDiceSriLanka = coef(krigingModel, "range")
+# message("portée Dice = ", thetaDiceSriLanka, " peu fiable ici car n'utilisant qu'une observation")
+
+```
+***
+
+On pourrait opérer une prédiction en de nombreux points pour obtenir une carte de l'intensité des précipitations à cette période. Il serait ainsi possible de tracer en couleur l'intensité des précipitations prédites sur toute la région. Bien sûr, le modèle est ici très frustre, il ne tient pas compte de la géographie (mers, montagnes), de l'évolution temporelle, et de bien d'autres phénomènes physiques...
+
+Par ailleurs, si on observait les précipations au nouveau point de prédiction *Dambulla*, il vaudrait mieux essayer d'expliquer ce niveau en fonction des cinq autres niveaux en chaque date, pour exploiter toutes les observations. Ici on suppose qu'on ne dispose pas de cette information (nombre de stations limité p.ex., comme dans le contexte minier, où le nombre de forages est limité).
